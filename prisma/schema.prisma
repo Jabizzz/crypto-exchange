@@ -1,15 +1,324 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
   provider = "prisma-client-js"
-  output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// User account and authentication
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  emailVerified     DateTime?
+  username          String?   @unique
+  password          String
+  role              Role      @default(USER)
+  firstName         String?
+  lastName          String?
+  profileImage      String?
+  phoneNumber       String?
+  isPhoneVerified   Boolean   @default(false)
+  country           String?
+  city              String?
+  address           String?
+  postalCode        String?
+  twoFactorEnabled  Boolean   @default(false)
+  twoFactorSecret   String?
+  status            UserStatus @default(PENDING)
+  kycStatus         KycStatus  @default(NOT_SUBMITTED)
+  kycDocuments      KycDocument[]
+  referralCode      String?   @unique
+  referredBy        String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  wallets           Wallet[]
+  orders            Order[]
+  transactions      Transaction[]
+  sessions          Session[]
+  notifications     Notification[]
+  loginHistory      LoginHistory[]
+  referralHistory   ReferralHistory[] @relation("Referrer")
+  referredByUser    ReferralHistory[] @relation("Referred")
+  apiKeys           ApiKey[]
+}
+
+enum Role {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model KycDocument {
+  id          String    @id @default(cuid())
+  type        String
+  url         String
+  status      String
+  comment     String?
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  expires      DateTime
+  sessionToken String   @unique
+  accessToken  String?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model LoginHistory {
+  id        String    @id @default(cuid())
+  userId    String
+  ipAddress String?
+  device    String?
+  browser   String?
+  location  String?
+  status    String    // SUCCESS, FAILED
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Cryptocurrency and Trading
+model Cryptocurrency {
+  id          String   @id @default(cuid())
+  symbol      String   @unique
+  name        String
+  logo        String?
+  decimals    Int      @default(8)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  wallets     Wallet[]
+  pairs       TradingPair[] @relation("BaseCurrency")
+  quotePairs  TradingPair[] @relation("QuoteCurrency")
+}
+
+model TradingPair {
+  id              String   @id @default(cuid())
+  name            String   @unique // e.g., "BTC/USDT"
+  baseCurrencyId  String
+  quoteCurrencyId String
+  minOrderSize    Decimal  @db.Decimal(24, 8)
+  maxOrderSize    Decimal  @db.Decimal(24, 8)
+  priceDecimals   Int      @default(2)
+  quantityDecimals Int     @default(8)
+  tradingFee      Decimal  @db.Decimal(10, 8) // e.g., 0.001 for 0.1%
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  baseCurrency    Cryptocurrency @relation("BaseCurrency", fields: [baseCurrencyId], references: [id])
+  quoteCurrency   Cryptocurrency @relation("QuoteCurrency", fields: [quoteCurrencyId], references: [id])
+  orders          Order[]
+  marketData      MarketData[]
+}
+
+model MarketData {
+  id            String   @id @default(cuid())
+  pairId        String
+  pair          TradingPair @relation(fields: [pairId], references: [id])
+  openPrice     Decimal  @db.Decimal(24, 8)
+  closePrice    Decimal  @db.Decimal(24, 8)
+  highPrice     Decimal  @db.Decimal(24, 8)
+  lowPrice      Decimal  @db.Decimal(24, 8)
+  volume        Decimal  @db.Decimal(24, 8)
+  timestamp     DateTime
+  interval      String   // 1m, 5m, 15m, 1h, 4h, 1d
+  createdAt     DateTime @default(now())
+}
+
+// Wallet and Transactions
+model Wallet {
+  id              String   @id @default(cuid())
+  userId          String
+  currencyId      String
+  balance         Decimal  @db.Decimal(24, 8)
+  lockedBalance   Decimal  @db.Decimal(24, 8) @default(0)
+  address         String?  // External wallet address
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency        Cryptocurrency @relation(fields: [currencyId], references: [id])
+  transactions    Transaction[]
+}
+
+model Transaction {
+  id              String    @id @default(cuid())
+  userId          String
+  walletId        String
+  type            TransactionType
+  amount          Decimal   @db.Decimal(24, 8)
+  fee             Decimal   @db.Decimal(24, 8) @default(0)
+  status          TransactionStatus @default(PENDING)
+  txHash          String?   // Blockchain transaction hash
+  confirmations   Int       @default(0)
+  toAddress       String?   // For withdrawals
+  fromAddress     String?   // For deposits
+  description     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  TRANSFER
+  FEE
+  REWARD
+  REFERRAL_BONUS
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// Order and Trade
+model Order {
+  id              String    @id @default(cuid())
+  userId          String
+  pairId          String
+  type            OrderType
+  side            OrderSide
+  price           Decimal?  @db.Decimal(24, 8) // Null for market orders
+  amount          Decimal   @db.Decimal(24, 8)
+  filled          Decimal   @db.Decimal(24, 8) @default(0)
+  status          OrderStatus @default(OPEN)
+  clientOrderId   String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pair            TradingPair @relation(fields: [pairId], references: [id])
+  trades          Trade[]  @relation("MakerOrder")
+  takerTrades     Trade[]  @relation("TakerOrder")
+}
+
+enum OrderType {
+  LIMIT
+  MARKET
+  STOP_LIMIT
+  STOP_MARKET
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  OPEN
+  FILLED
+  PARTIALLY_FILLED
+  CANCELLED
+  REJECTED
+}
+
+model Trade {
+  id              String   @id @default(cuid())
+  makerOrderId    String
+  takerOrderId    String
+  price           Decimal  @db.Decimal(24, 8)
+  amount          Decimal  @db.Decimal(24, 8)
+  fee             Decimal  @db.Decimal(24, 8)
+  createdAt       DateTime @default(now())
+
+  // Relations
+  makerOrder      Order    @relation("MakerOrder", fields: [makerOrderId], references: [id])
+  takerOrder      Order    @relation("TakerOrder", fields: [takerOrderId], references: [id])
+}
+
+// Admin and settings
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  category  String   @default("general")
+  isPublic  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  key         String   @unique
+  secret      String
+  permissions String[]
+  ipWhitelist String[]
+  isActive    Boolean  @default(true)
+  lastUsed    DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Notifications and communication
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // INFO, WARNING, ERROR, SUCCESS
+  isRead    Boolean  @default(false)
+  data      Json?    // Additional data as JSON
+  createdAt DateTime @default(now())
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ReferralHistory {
+  id              String   @id @default(cuid())
+  referrerId      String   // User who referred
+  referredId      String   // User who was referred
+  reward          Decimal? @db.Decimal(24, 8)
+  status          String   // PENDING, COMPLETED, CANCELLED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  referrer        User     @relation("Referrer", fields: [referrerId], references: [id])
+  referred        User     @relation("Referred", fields: [referredId], references: [id])
 }
